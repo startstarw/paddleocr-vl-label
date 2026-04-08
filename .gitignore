@@ -1,5 +1,8 @@
 .codex
 __pycache__/
+ppocr_vl_label/__pycache__/
+ppocr_vl_label/controllers/__pycache__/
+ppocr_vl_label/tools/__pycache__/
 *.pyc
 *.pyd
 *.pyo

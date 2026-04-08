@@ -1,12 +1,4 @@
-import tkinter as tk
-
-from ppocr_vl_label import App
-
-
-def main():
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+from ppocr_vl_label import main
 
 
 if __name__ == "__main__":
