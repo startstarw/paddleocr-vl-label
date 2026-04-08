@@ -1,171 +1,13 @@
 import json
-import os
-import subprocess
-import sys
-import threading
 import tkinter as tk
-import urllib.request
-from dataclasses import dataclass, field
-from io import BytesIO
 from pathlib import Path, PurePosixPath
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
-try:
-    from PIL import Image, ImageOps, ImageTk
-except Exception:
-    Image = ImageOps = ImageTk = None
-
-TAG_VALUES = ("mask", "no_mask")
-MEDIA_LABELS = {"image": "图片", "video": "视频"}
-LABEL_TO_MEDIA = {v: k for k, v in MEDIA_LABELS.items()}
-THEMES = {
-    "浅色": dict(root="#f3f6fb", panel="#ffffff", alt="#f8fafc", text="#101828", sub="#475467", border="#d0d5dd", accent="#1849a9", soft="#eef4ff", active="#dbe8ff", input="#ffffff", selbg="#dbe8ff", selfg="#0b4fb3"),
-    "暗色": dict(root="#0f172a", panel="#111827", alt="#1f2937", text="#f8fafc", sub="#cbd5e1", border="#334155", accent="#93c5fd", soft="#1e293b", active="#172554", input="#0b1220", selbg="#1d4ed8", selfg="#eff6ff"),
-}
-
-
-@dataclass
-class TextItem:
-    text: str = ""
-    tag: str = "mask"
-
-    def to_dict(self):
-        return {"text": self.text, "tag": self.tag}
-
-
-@dataclass
-class MediaItem:
-    media_url: str = ""
-    matched_text_index: int = 0
-
-    def to_dict(self):
-        return {"image_url": self.media_url, "matched_text_index": self.matched_text_index}
-
-
-@dataclass
-class Sample:
-    media_type: str = "image"
-    is_system: int = 0
-    text_info: list[TextItem] = field(default_factory=list)
-    media_info: list[MediaItem] = field(default_factory=list)
-
-    def to_dict(self):
-        key = "image_info" if self.media_type == "image" else "video_info"
-        data = {"text_info": [i.to_dict() for i in self.text_info], key: [i.to_dict() for i in self.media_info]}
-        if self.is_system:
-            data["is_system"] = 1
-        return data
-
-    @classmethod
-    def from_dict(cls, data):
-        key = "image_info" if data.get("image_info") is not None else "video_info"
-        return cls(
-            media_type="image" if key == "image_info" else "video",
-            is_system=1 if data.get("is_system") else 0,
-            text_info=[TextItem(i.get("text", ""), i.get("tag", "mask")) for i in data.get("text_info", [])],
-            media_info=[MediaItem(i.get("image_url", ""), int(i.get("matched_text_index", 0))) for i in data.get(key, [])],
-        )
-
-
-def open_with_system(path: str):
-    if not path:
-        return
-    if path.startswith(("http://", "https://")):
-        import webbrowser
-        webbrowser.open(path)
-        return
-    try:
-        if sys.platform.startswith("win"):
-            os.startfile(path)  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
-        else:
-            subprocess.Popen(["xdg-open", path])
-    except Exception as exc:
-        messagebox.showerror("打开失败", f"无法打开媒体文件：\n{exc}")
-
-
-class MediaCache:
-    def __init__(self, path_resolver):
-        self.path_resolver = path_resolver
-        self.lock = threading.Lock()
-        self.bytes_cache: dict[str, bytes] = {}
-        self.image_cache: dict[tuple[str, tuple[int, int]], object] = {}
-        self.photo_cache: dict[tuple[str, tuple[int, int], str], object] = {}
-
-    def clear(self):
-        with self.lock:
-            self.bytes_cache.clear()
-            self.image_cache.clear()
-            self.photo_cache.clear()
-
-    def _load_source_bytes(self, source: str) -> bytes:
-        with self.lock:
-            if source in self.bytes_cache:
-                return self.bytes_cache[source]
-        if source.startswith(("http://", "https://")):
-            request = urllib.request.Request(source, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(request, timeout=15) as response:
-                data = response.read()
-        else:
-            path = self.path_resolver(source)
-            if path is None or not path.exists():
-                raise FileNotFoundError("无法解析图片路径。")
-            data = path.read_bytes()
-        with self.lock:
-            self.bytes_cache[source] = data
-        return data
-
-    def get_pil_image(self, source: str, size: tuple[int, int]):
-        if Image is None or ImageOps is None:
-            raise RuntimeError("未安装 pillow，无法处理图片。")
-        cache_key = (source, size)
-        with self.lock:
-            if cache_key in self.image_cache:
-                return self.image_cache[cache_key].copy()
-        img = Image.open(BytesIO(self._load_source_bytes(source))).convert("RGB")
-        img = ImageOps.contain(img, size)
-        with self.lock:
-            self.image_cache[cache_key] = img.copy()
-        return img
-
-    def get_photo_image(self, source: str, size: tuple[int, int], theme_name: str, background: str):
-        if ImageTk is None:
-            raise RuntimeError("未安装 pillow，无法创建预览图。")
-        cache_key = (source, size, theme_name)
-        if cache_key in self.photo_cache:
-            return self.photo_cache[cache_key]
-        img = self.get_pil_image(source, size)
-        canvas = Image.new("RGB", size, background)
-        canvas.paste(img, ((size[0] - img.size[0]) // 2, (size[1] - img.size[1]) // 2))
-        photo = ImageTk.PhotoImage(canvas)
-        self.photo_cache[cache_key] = photo
-        return photo
-
-    def pil_to_photo(self, pil_image, size: tuple[int, int], background: str):
-        if Image is None or ImageTk is None:
-            raise RuntimeError("未安装 pillow，无法创建预览图。")
-        canvas = Image.new("RGB", size, background)
-        canvas.paste(pil_image, ((size[0] - pil_image.size[0]) // 2, (size[1] - pil_image.size[1]) // 2))
-        return ImageTk.PhotoImage(canvas)
-
-
-class AsyncMediaLoader:
-    def __init__(self, root: tk.Tk, media_cache: MediaCache):
-        self.root = root
-        self.media_cache = media_cache
-
-    def request_image(self, source: str, size: tuple[int, int], on_success, on_error):
-        def worker():
-            try:
-                image = self.media_cache.get_pil_image(source, size)
-            except Exception as exc:
-                self.root.after(0, lambda: on_error(exc))
-                return
-            self.root.after(0, lambda: on_success(image))
-
-        threading.Thread(target=worker, daemon=True).start()
+from .media import AsyncMediaLoader, MediaCache, open_with_system
+from .models import LABEL_TO_MEDIA, MEDIA_LABELS, TAG_VALUES, MediaItem, Sample, TextItem
+from .controllers.preview_controller import PREVIEW_MODES, PreviewController
+from .themes import THEMES
 
 
 class App:
@@ -180,10 +22,10 @@ class App:
         except tk.TclError:
             pass
         self.samples, self.current_index, self.current_file = [], None, None
-        self.preview_image, self.thumb_images, self.drag_media_index = None, [], None
+        self.preview_image, self.drag_media_index = None, None
         self.pending_preview_job: Optional[str] = None
         self.preview_request_id = 0
-        self.thumbnail_generation_id = 0
+        self.preview_mode_var = tk.StringVar(value=PREVIEW_MODES[0])
         self.theme_var = tk.StringVar(value="浅色")
         self.status_var = tk.StringVar(value="就绪")
         self.preview_path_var = tk.StringVar(value="当前未选择媒体")
@@ -194,6 +36,7 @@ class App:
         self.media_match_var = tk.StringVar(value="0")
         self.media_cache = MediaCache(self.resolve_media_path)
         self.media_loader = AsyncMediaLoader(self.root, self.media_cache)
+        self.preview_controller = PreviewController(self)
         self._build()
         self.apply_theme()
         self.new_sample()
@@ -233,8 +76,8 @@ class App:
 
         main = ttk.Frame(body, style="App.TFrame")
         main.grid(row=0, column=1, sticky="nsew")
-        main.columnconfigure(0, weight=7)
-        main.columnconfigure(1, weight=5)
+        main.columnconfigure(0, weight=4)
+        main.columnconfigure(1, weight=9)
         main.rowconfigure(1, weight=1)
         meta = ttk.LabelFrame(main, text="样本设置", padding=10, style="Card.TLabelframe")
         meta.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
@@ -243,7 +86,7 @@ class App:
         media_box.grid(row=0, column=1, padx=(6, 16), sticky="w")
         media_box.bind("<<ComboboxSelected>>", lambda e: self.on_meta_changed())
         ttk.Checkbutton(meta, text="系统提示词模式", variable=self.is_system_var, command=self.on_meta_changed).grid(row=0, column=2, sticky="w")
-        ttk.Button(meta, text="预览当前媒体", command=self.preview_selected_media, style="Primary.TButton").grid(row=0, column=3, padx=(16, 0))
+        ttk.Button(meta, text="预览当前媒体", command=self.preview_controller.preview_selected_media, style="Primary.TButton").grid(row=0, column=3, padx=(16, 0))
         ttk.Button(meta, text="外部打开媒体", command=self.open_selected_media, style="Primary.TButton").grid(row=0, column=4, padx=(6, 0))
 
         editor = ttk.Frame(main, style="App.TFrame")
@@ -283,7 +126,7 @@ class App:
         media_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
         media_frame.columnconfigure(0, weight=1)
         media_frame.rowconfigure(0, weight=1)
-        self.media_tree = ttk.Treeview(media_frame, columns=("index", "matched", "url"), show="headings", height=10)
+        self.media_tree = ttk.Treeview(media_frame, columns=("index", "matched", "url"), show="headings", height=6)
         for col, title, width in [("index", "#", 42), ("matched", "关联文本索引", 120), ("url", "媒体路径 / URL", 380)]:
             self.media_tree.heading(col, text=title)
             self.media_tree.column(col, width=width, anchor="center" if col != "url" else "w")
@@ -310,21 +153,27 @@ class App:
         preview = ttk.LabelFrame(right, text="预览区", padding=10, style="Card.TLabelframe")
         preview.grid(row=2, column=0, sticky="nsew", pady=(10, 0))
         preview.columnconfigure(0, weight=1)
-        preview.rowconfigure(0, weight=1)
-        self.preview_label = tk.Label(preview, anchor="center", justify="center", bd=0, padx=20, pady=20)
-        self.preview_label.grid(row=0, column=0, sticky="nsew")
-        ttk.Label(preview, textvariable=self.preview_path_var, style="PanelSub.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
-        thumbs = ttk.LabelFrame(preview, text="缩略图栏", padding=8, style="Card.TLabelframe")
-        thumbs.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        thumbs.columnconfigure(0, weight=1)
-        self.thumb_canvas = tk.Canvas(thumbs, height=120, bd=0, highlightthickness=0)
-        self.thumb_canvas.grid(row=0, column=0, sticky="ew")
-        self.thumb_scroll = ttk.Scrollbar(thumbs, orient="horizontal", command=self.thumb_canvas.xview)
-        self.thumb_scroll.grid(row=1, column=0, sticky="ew")
-        self.thumb_inner = tk.Frame(self.thumb_canvas)
-        self.thumb_inner.bind("<Configure>", lambda e: self.thumb_canvas.configure(scrollregion=self.thumb_canvas.bbox("all")))
-        self.thumb_canvas.create_window((0, 0), window=self.thumb_inner, anchor="nw")
-        self.thumb_canvas.configure(xscrollcommand=self.thumb_scroll.set)
+        preview.rowconfigure(1, weight=1)
+        preview_top = ttk.Frame(preview, style="Inner.TFrame")
+        preview_top.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        preview_top.columnconfigure(1, weight=1)
+        ttk.Label(preview_top, text="预览模式", style="PanelBody.TLabel").grid(row=0, column=0, sticky="w")
+        preview_mode_box = ttk.Combobox(preview_top, textvariable=self.preview_mode_var, values=PREVIEW_MODES, width=10, state="readonly")
+        preview_mode_box.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        preview_mode_box.bind("<<ComboboxSelected>>", self.preview_controller.on_preview_mode_changed)
+        preview_view = ttk.Frame(preview, style="Inner.TFrame")
+        preview_view.grid(row=1, column=0, sticky="nsew")
+        preview_view.columnconfigure(0, weight=1)
+        preview_view.rowconfigure(0, weight=1)
+        self.preview_canvas = tk.Canvas(preview_view, bd=0, highlightthickness=0)
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        self.preview_canvas.bind("<Configure>", self.preview_controller.on_preview_canvas_resized)
+        preview_y = ttk.Scrollbar(preview_view, orient="vertical", command=self.preview_canvas.yview)
+        preview_y.grid(row=0, column=1, sticky="ns")
+        preview_x = ttk.Scrollbar(preview_view, orient="horizontal", command=self.preview_canvas.xview)
+        preview_x.grid(row=1, column=0, sticky="ew")
+        self.preview_canvas.configure(xscrollcommand=preview_x.set, yscrollcommand=preview_y.set)
+        ttk.Label(preview, textvariable=self.preview_path_var, style="PanelSub.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 0))
 
     def theme(self):
         return THEMES[self.theme_var.get()]
@@ -350,12 +199,9 @@ class App:
         self.style.map("Treeview", background=[("selected", t["selbg"])], foreground=[("selected", t["selfg"])])
         self.sample_listbox.configure(bg=t["panel"], fg=t["text"], selectbackground=t["selbg"], selectforeground=t["selfg"])
         self.text_editor.configure(bg=t["input"], fg=t["text"], insertbackground=t["text"], highlightbackground=t["border"], highlightcolor=t["accent"])
-        self.preview_label.configure(bg=t["alt"], fg=t["sub"])
-        self.thumb_canvas.configure(bg=t["panel"])
-        self.thumb_inner.configure(bg=t["panel"])
-        self.refresh_thumbs()
+        self.preview_canvas.configure(bg=t["alt"])
         if self.current_sample():
-            self.preview_selected_media()
+            self.preview_controller.preview_selected_media()
 
     def refresh_sample_list(self):
         self.sample_listbox.delete(0, tk.END)
@@ -392,7 +238,7 @@ class App:
         self.is_system_var.set(s.is_system)
         self.refresh_text_tree()
         self.refresh_media_tree()
-        self.clear_preview("请选择要预览的媒体。\n视频暂不支持内嵌播放，请使用外部程序打开。")
+        self.preview_controller.clear_preview("请选择要预览的媒体。\n视频暂不支持内嵌播放，请使用外部程序打开。")
 
     def new_project(self):
         if self.samples and not messagebox.askyesno("确认操作", "是否丢弃当前尚未保存的数据？"):
@@ -432,7 +278,6 @@ class App:
         self.refresh_sample_list()
         if self.current_index is not None:
             self.sample_listbox.selection_set(self.current_index)
-        self.refresh_thumbs()
 
     def refresh_text_tree(self):
         s = self.current_sample()
@@ -452,7 +297,6 @@ class App:
             return
         for i, item in enumerate(s.media_info):
             self.media_tree.insert("", "end", iid=str(i), values=(i, item.matched_text_index, item.media_url))
-        self.refresh_thumbs()
         if s.media_info:
             self.select_media_index(0)
 
@@ -482,8 +326,7 @@ class App:
         item = s.media_info[int(sel[0])]
         self.media_url_var.set(item.media_url)
         self.media_match_var.set(str(item.matched_text_index))
-        self.highlight_thumb(int(sel[0]))
-        self.schedule_preview()
+        self.preview_controller.schedule_preview()
 
     def add_text_item(self):
         s = self.current_sample()
@@ -618,21 +461,6 @@ class App:
             self.media_url_var.set(path)
             self.update_selected_media()
 
-    def schedule_preview(self, delay_ms: int = 80):
-        if self.pending_preview_job is not None:
-            self.root.after_cancel(self.pending_preview_job)
-        self.pending_preview_job = self.root.after(delay_ms, self.preview_selected_media)
-
-    def clear_preview(self, msg: str):
-        if self.pending_preview_job is not None:
-            self.root.after_cancel(self.pending_preview_job)
-            self.pending_preview_job = None
-        self.preview_request_id += 1
-        self.preview_image = None
-        self.preview_label.configure(image="", text=msg)
-        self.preview_path_var.set("当前未选择媒体")
-        self.highlight_thumb(None)
-
     def resolve_media_path(self, media_path: str):
         if not media_path or media_path.startswith(("http://", "https://")):
             return None
@@ -646,145 +474,6 @@ class App:
             if rp.exists():
                 return rp
         return p
-
-    def make_thumb(self, item: MediaItem, media_type: str):
-        if Image is None or ImageOps is None or ImageTk is None:
-            return None
-        size = (92, 92)
-        try:
-            if media_type == "image":
-                raw = item.media_url.strip()
-                if raw.startswith(("http://", "https://")):
-                    source = raw
-                else:
-                    path = self.resolve_media_path(raw)
-                    source = raw if path and path.exists() else ""
-                if source:
-                    background = "#111827" if self.theme_var.get() == "暗色" else "#ffffff"
-                    return self.media_cache.get_photo_image(source, size, self.theme_var.get(), background)
-                img = Image.new("RGB", size, "#9ca3af")
-            else:
-                img = Image.new("RGB", size, "#374151")
-            img = ImageOps.contain(img, size)
-            bg = "#111827" if self.theme_var.get() == "暗色" else "#ffffff"
-            canvas = Image.new("RGB", size, bg)
-            canvas.paste(img, ((size[0] - img.size[0]) // 2, (size[1] - img.size[1]) // 2))
-            return ImageTk.PhotoImage(canvas)
-        except Exception:
-            return None
-
-    def refresh_thumbs(self):
-        for w in self.thumb_inner.winfo_children():
-            w.destroy()
-        self.thumb_images = []
-        s = self.current_sample()
-        if not s:
-            return
-        t = self.theme()
-        self.thumbnail_generation_id += 1
-        generation_id = self.thumbnail_generation_id
-        if not s.media_info:
-            tk.Label(self.thumb_inner, text="暂无媒体", bg=t["panel"], fg=t["sub"]).pack(side="left", padx=8, pady=8)
-            return
-        for i, item in enumerate(s.media_info):
-            box = tk.Frame(self.thumb_inner, bg=t["panel"], bd=1, relief="solid")
-            box.pack(side="left", padx=6, pady=4)
-            btn = tk.Button(box, text=f"加载中\n#{i}" if s.media_type == "image" else f"{MEDIA_LABELS[s.media_type]}\n#{i}", command=lambda x=i: self.select_media_index(x), width=10, height=5, bd=0, relief="flat")
-            btn.pack(fill="both", expand=True)
-            tk.Label(box, text=item.media_url[-16:] if item.media_url else "空路径", bg=t["panel"], fg=t["sub"], font=("Segoe UI", 8)).pack(fill="x", padx=4, pady=(0, 4))
-            if s.media_type == "image":
-                source = self.resolve_media_source(item.media_url.strip())
-                if source:
-                    self._request_thumbnail(source, i, btn, generation_id)
-        self.highlight_thumb(self.get_selected_media_index())
-
-    def _request_thumbnail(self, source: str, index: int, button: tk.Button, generation_id: int):
-        size = (92, 92)
-        background = "#111827" if self.theme_var.get() == "暗色" else "#ffffff"
-
-        def on_success(pil_image):
-            if generation_id != self.thumbnail_generation_id or not button.winfo_exists():
-                return
-            photo = self.media_cache.pil_to_photo(pil_image, size, background)
-            self.thumb_images.append(photo)
-            button.configure(image=photo, text=f"#{index}", compound="top", width=100, height=100)
-
-        def on_error(_exc):
-            if generation_id != self.thumbnail_generation_id or not button.winfo_exists():
-                return
-            button.configure(text=f"预览失败\n#{index}")
-
-        self.media_loader.request_image(source, size, on_success, on_error)
-
-    def get_selected_media_index(self):
-        sel = self.media_tree.selection()
-        return int(sel[0]) if sel else None
-
-    def highlight_thumb(self, active):
-        t = self.theme()
-        for i, box in enumerate(self.thumb_inner.winfo_children()):
-            bg = t["selbg"] if i == active else t["panel"]
-            fg = t["selfg"] if i == active else t["sub"]
-            box.configure(bg=bg)
-            for child in box.winfo_children():
-                if isinstance(child, tk.Button):
-                    child.configure(bg=bg, fg=t["text"], activebackground=bg, activeforeground=t["text"])
-                if isinstance(child, tk.Label):
-                    child.configure(bg=bg, fg=fg)
-
-    def preview_selected_media(self):
-        self.pending_preview_job = None
-        self.preview_request_id += 1
-        request_id = self.preview_request_id
-        s, sel = self.current_sample(), self.media_tree.selection()
-        if not s or not sel:
-            return
-        item = s.media_info[int(sel[0])]
-        media_path = item.media_url.strip()
-        if not media_path:
-            self.clear_preview("当前媒体路径为空。")
-            return
-        self.preview_path_var.set(media_path)
-        if s.media_type == "video":
-            self.preview_label.configure(text=f"当前是视频文件：\n{media_path}\n\n请使用“外部打开媒体”进行查看。", image="")
-            self.preview_image = None
-            return
-        source = self.resolve_media_source(media_path)
-        if source is None:
-            self.clear_preview("无法解析当前图片路径。")
-            return
-        self.preview_label.configure(text="正在加载预览…", image="")
-        try:
-            if Image and ImageTk and ImageOps:
-                background = self.theme()["alt"]
-                def on_success(pil_image):
-                    if request_id != self.preview_request_id:
-                        return
-                    self.preview_image = self.media_cache.pil_to_photo(pil_image, (660, 520), background)
-                    self.preview_label.configure(image=self.preview_image, text="")
-                    self.preview_path_var.set(media_path if media_path.startswith(("http://", "https://")) else str(self.resolve_media_path(media_path)))
-
-                def on_error(exc):
-                    if request_id != self.preview_request_id:
-                        return
-                    self.preview_label.configure(text=f"预览失败：\n{exc}", image="")
-                    self.preview_image = None
-
-                self.media_loader.request_image(source, (660, 520), on_success, on_error)
-                return
-            if media_path.startswith(("http://", "https://")):
-                raise RuntimeError("远程图片预览需要先安装 `pillow`。")
-            path = self.resolve_media_path(media_path)
-            if Path(media_path).suffix.lower() not in {".png", ".gif"}:
-                raise RuntimeError("如需预览 jpg/webp/bmp 等图片，请先安装 `pillow`。")
-            if path is None or not path.exists():
-                raise FileNotFoundError("无法解析图片路径。")
-            self.preview_image = tk.PhotoImage(file=str(path))
-            self.preview_label.configure(image=self.preview_image, text="")
-            self.preview_path_var.set(str(path))
-        except Exception as exc:
-            self.preview_label.configure(text=f"预览失败：\n{exc}", image="")
-            self.preview_image = None
 
     def open_selected_media(self):
         s, sel = self.current_sample(), self.media_tree.selection()
@@ -872,12 +561,3 @@ class App:
         self.status_var.set(f"已保存到 {path}")
         messagebox.showinfo("保存成功", f"已保存 {len(self.samples)} 条样本。")
 
-
-def main():
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    main()

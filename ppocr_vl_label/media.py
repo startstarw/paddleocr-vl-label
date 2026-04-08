@@ -46,6 +46,18 @@ class MediaCache:
             self.image_cache.clear()
             self.photo_cache.clear()
 
+    def get_original_pil_image(self, source: str):
+        if Image is None:
+            raise RuntimeError("未安装 pillow，无法处理图片。")
+        cache_key = (source, (0, 0))
+        with self.lock:
+            if cache_key in self.image_cache:
+                return self.image_cache[cache_key].copy()
+        img = Image.open(BytesIO(self._load_source_bytes(source))).convert("RGB")
+        with self.lock:
+            self.image_cache[cache_key] = img.copy()
+        return img
+
     def _load_source_bytes(self, source: str) -> bytes:
         with self.lock:
             if source in self.bytes_cache:
@@ -70,8 +82,7 @@ class MediaCache:
         with self.lock:
             if cache_key in self.image_cache:
                 return self.image_cache[cache_key].copy()
-        img = Image.open(BytesIO(self._load_source_bytes(source))).convert("RGB")
-        img = ImageOps.contain(img, size)
+        img = ImageOps.contain(self.get_original_pil_image(source), size)
         with self.lock:
             self.image_cache[cache_key] = img.copy()
         return img
@@ -106,6 +117,17 @@ class AsyncMediaLoader:
         def worker():
             try:
                 image = self.media_cache.get_pil_image(source, size)
+            except Exception as exc:
+                self.root.after(0, lambda: on_error(exc))
+                return
+            self.root.after(0, lambda: on_success(image))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def request_original_image(self, source: str, on_success, on_error):
+        def worker():
+            try:
+                image = self.media_cache.get_original_pil_image(source)
             except Exception as exc:
                 self.root.after(0, lambda: on_error(exc))
                 return

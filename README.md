@@ -7,9 +7,10 @@
 当前代码已经做了基础模块化拆分：
 
 - `app.py`：程序启动入口
-- `ppocr_vl_label/app_window.py`：主界面与交互逻辑
+- `ppocr_vl_label/app_window.py`：主窗口编排与样本编辑逻辑
 - `ppocr_vl_label/models.py`：数据模型
 - `ppocr_vl_label/media.py`：媒体缓存、异步加载、外部打开
+- `ppocr_vl_label/preview_controller.py`：预览模式、预览渲染与预览加载控制
 - `ppocr_vl_label/themes.py`：主题配置
 
 当前版本支持：

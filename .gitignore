@@ -1,2 +1,7 @@
 .codex
-__pycache__/**
+**/__pycache__/**
+ppocr_vl_label/__pycache__/app_window.cpython-310.pyc
+ppocr_vl_label/__pycache__/app_window.cpython-312.pyc
+ppocr_vl_label/__pycache__/media.cpython-312.pyc
+ppocr_vl_label/__pycache__/models.cpython-312.pyc
+ppocr_vl_label/__pycache__/themes.cpython-312.pyc
