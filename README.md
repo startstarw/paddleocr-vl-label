@@ -71,7 +71,8 @@ pip install pillow
 视频样本会自动使用 `video_info` 字段。
 
 ## 推荐使用流程
-
+### 界面截图
+![alt text](./docs/image.png)
 1. 点击“新增样本”创建一个样本
 2. 在 `text_info` 中录入问答内容
 3. 在右侧添加图片或视频路径

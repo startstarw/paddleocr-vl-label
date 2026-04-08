@@ -1,7 +1,10 @@
 import tkinter as tk
 from pathlib import Path
 
-from .media import Image, ImageOps, ImageTk
+try:
+    from ..media import Image, ImageOps, ImageTk
+except ImportError:
+    from media import Image, ImageOps, ImageTk
 
 
 PREVIEW_MODES = ("适应窗口", "原始比例", "1:1")

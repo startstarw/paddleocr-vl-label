@@ -1,13 +1,23 @@
 import json
+import sys
 import tkinter as tk
 from pathlib import Path, PurePosixPath
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
-from .media import AsyncMediaLoader, MediaCache, open_with_system
-from .models import LABEL_TO_MEDIA, MEDIA_LABELS, TAG_VALUES, MediaItem, Sample, TextItem
-from .controllers.preview_controller import PREVIEW_MODES, PreviewController
-from .themes import THEMES
+try:
+    from .media import AsyncMediaLoader, MediaCache, open_with_system
+    from .models import LABEL_TO_MEDIA, MEDIA_LABELS, TAG_VALUES, MediaItem, Sample, TextItem
+    from .controllers.preview_controller import PREVIEW_MODES, PreviewController
+    from .themes import THEMES
+except ImportError:
+    CURRENT_DIR = Path(__file__).resolve().parent
+    if str(CURRENT_DIR) not in sys.path:
+        sys.path.insert(0, str(CURRENT_DIR))
+    from media import AsyncMediaLoader, MediaCache, open_with_system
+    from models import LABEL_TO_MEDIA, MEDIA_LABELS, TAG_VALUES, MediaItem, Sample, TextItem
+    from controllers.preview_controller import PREVIEW_MODES, PreviewController
+    from themes import THEMES
 
 
 class App:
@@ -227,7 +237,6 @@ class App:
         sel = self.sample_listbox.curselection()
         if sel:
             self.current_index = sel[0]
-            self.media_cache.clear()
             self.load_sample()
 
     def load_sample(self):
@@ -245,7 +254,6 @@ class App:
             return
         self.samples = []
         self.current_file = None
-        self.media_cache.clear()
         self.new_sample()
         self.status_var.set("已新建项目")
 
@@ -534,7 +542,6 @@ class App:
             messagebox.showwarning("空文件", "文件中没有找到有效样本。")
             return
         self.current_file = Path(path)
-        self.media_cache.clear()
         self.refresh_sample_list()
         self.current_index = 0
         self.sample_listbox.selection_clear(0, tk.END)
@@ -561,3 +568,12 @@ class App:
         self.status_var.set(f"已保存到 {path}")
         messagebox.showinfo("保存成功", f"已保存 {len(self.samples)} 条样本。")
 
+
+def main():
+    root = tk.Tk()
+    App(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
